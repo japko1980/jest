@@ -5,7 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import nativeModule = require('module');
+import nativeModule from 'module';
 import * as path from 'path';
 import {URL, fileURLToPath, pathToFileURL} from 'url';
 import {
@@ -21,8 +21,8 @@ import {
 import {parse as parseCjs} from 'cjs-module-lexer';
 import {CoverageInstrumenter, type V8Coverage} from 'collect-v8-coverage';
 import * as fs from 'graceful-fs';
-import slash = require('slash');
-import stripBOM = require('strip-bom');
+import slash from 'slash';
+import stripBOM from 'strip-bom';
 import type {
   Jest,
   JestEnvironment,
@@ -285,7 +285,7 @@ export default class Runtime {
       ...new Set(['import', 'default', ...envExportConditions]),
     ];
     this.cjsConditions = [
-      ...new Set(['require', 'default', ...envExportConditions]),
+      ...new Set(['require', 'node', 'default', ...envExportConditions]),
     ];
 
     if (config.automock) {
