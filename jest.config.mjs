@@ -38,7 +38,7 @@ export default {
   },
   snapshotSerializers: [require.resolve('jest-serializer-ansi-escapes')],
   testEnvironmentOptions: {
-    globalsCleanupMode: 'hard',
+    globalsCleanup: 'on',
   },
   testPathIgnorePatterns: [
     '/__arbitraries__/',
@@ -61,7 +61,6 @@ export default {
     '/packages/jest-haste-map/src/__tests__/haste_impl.js',
     '/packages/jest-haste-map/src/__tests__/dependencyExtractor.js',
     '/packages/jest-haste-map/src/__tests__/test_dotfiles_root/',
-    '/packages/jest-repl/src/__tests__/test_root',
     '/packages/jest-runtime/src/__tests__/defaultResolver.js',
     '/packages/jest-runtime/src/__tests__/module_dir/',
     '/packages/jest-runtime/src/__tests__/NODE_PATH_dir',

@@ -2,6 +2,17 @@
 
 ### Features
 
+- `[jest-resolver]` Implement the `defaultAsyncResolver` ([#15679](https://github.com/jestjs/jest/pull/15679))
+
+### Chore & Maintenance
+
+- `[*]` Remove and deprecate `jest-repl` package ([#15673](https://github.com/jestjs/jest/pull/15673))
+
+## 30.0.0
+
+### Features
+
+- `[*]` Renamed `globalsCleanupMode` to `globalsCleanup` and `--waitNextEventLoopTurnForUnhandledRejectionEvents` to `--waitForUnhandledRejections`
 - `[expect]` Add `ArrayOf` asymmetric matcher for validating array elements. ([#15567](https://github.com/jestjs/jest/pull/15567))
 - `[babel-jest]` Add option `excludeJestPreset` to allow opting out of `babel-preset-jest` ([#15164](https://github.com/jestjs/jest/pull/15164))
 - `[expect]` Revert [#15038](https://github.com/jestjs/jest/pull/15038) to fix `expect(fn).toHaveBeenCalledWith(expect.objectContaining(...))` when there are multiple calls ([#15508](https://github.com/jestjs/jest/pull/15508))
@@ -102,7 +113,7 @@
 - `[jest-util]` Always load `mjs` files with `import` ([#15447](https://github.com/jestjs/jest/pull/15447))
 - `[jest-worker]` Properly handle a circular reference error when worker tries to send an assertion fails where either the expected or actual value is circular ([#15191](https://github.com/jestjs/jest/pull/15191))
 - `[jest-worker]` Properly handle a BigInt when worker tries to send an assertion fails where either the expected or actual value is BigInt ([#15191](https://github.com/jestjs/jest/pull/15191))
-- `[expect]` Resolve issue where `ObjectContaining` matched non-object values. ([#15463])(https://github.com/jestjs/jest/pull/15463).
+- `[expect]` Resolve issue where `ObjectContaining` matched non-object values. [#15463](https://github.com/jestjs/jest/pull/15463).
   - Adds a `conditional/check` to ensure the argument passed to `expect` is an object.
   - Add unit tests for new `ObjectContaining` behavior.
   - Remove `invalid/wrong` test case assertions for `ObjectContaining`.
@@ -113,6 +124,8 @@
 - `[*]` [**BREAKING**] Bundle all of Jest's modules into `index.js` ([#12348](https://github.com/jestjs/jest/pull/12348), [#14550](https://github.com/jestjs/jest/pull/14550) & [#14661](https://github.com/jestjs/jest/pull/14661))
 - `[jest-haste-map]` Only spawn one process to check for `watchman` installation ([#14826](https://github.com/jestjs/jest/pull/14826))
 - `[jest-runner]` Better cleanup `source-map-support` after test to resolve (minor) memory leak ([#15233](https://github.com/jestjs/jest/pull/15233))
+- `[jest-resolver]` Migrate `resolve` and `resolve.exports` to `unrs-resolver` ([#15619](https://github.com/jestjs/jest/pull/15619))
+- `[jest-circus, jest-environment-node, jest-repl, jest-runner, jest-util]` Cleanup global variables on environment teardown to reduce memory leaks ([#15215](https://github.com/jestjs/jest/pull/15215) & [#15636](https://github.com/jestjs/jest/pull/15636) & [#15643](https://github.com/jestjs/jest/pull/15643))
 
 ### Chore & Maintenance
 

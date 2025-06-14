@@ -13,7 +13,7 @@ import {pathToFileURL} from 'url';
 
 import userResolver from '../__mocks__/userResolver';
 import userResolverAsync from '../__mocks__/userResolverAsync';
-import defaultResolver from '../defaultResolver';
+import defaultResolver, {defaultAsyncResolver} from '../defaultResolver';
 import nodeModulesPaths from '../nodeModulesPaths';
 import Resolver from '../resolver';
 import type {ResolverConfig} from '../types';
@@ -109,6 +109,7 @@ describe('findNodeModule', () => {
     expect(mockUserResolver.mock.calls[0][1]).toStrictEqual({
       basedir: '/',
       conditions: ['conditions, woooo'],
+      defaultAsyncResolver,
       defaultResolver,
       extensions: ['js'],
       moduleDirectory: ['node_modules'],
@@ -173,7 +174,7 @@ describe('findNodeModule', () => {
       );
     });
 
-    test('respects order in conditions over package.json', () => {
+    test('respects order in package.json, not conditions', () => {
       const resultImport = Resolver.findNodeModule('exports', {
         basedir: conditionsRoot,
         conditions: ['import', 'require'],
@@ -183,7 +184,7 @@ describe('findNodeModule', () => {
         conditions: ['require', 'import'],
       });
 
-      expect(resultImport).not.toEqual(resultRequire);
+      expect(resultImport).toEqual(resultRequire);
     });
 
     test('supports nested paths', () => {
@@ -404,6 +405,7 @@ describe('findNodeModuleAsync', () => {
     expect(mockUserResolverAsync.async.mock.calls[0][1]).toStrictEqual({
       basedir: '/',
       conditions: ['conditions, woooo'],
+      defaultAsyncResolver,
       defaultResolver,
       extensions: ['js'],
       moduleDirectory: ['node_modules'],

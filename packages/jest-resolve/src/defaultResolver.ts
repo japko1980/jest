@@ -5,13 +5,14 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import {resolve} from 'path';
 import {fileURLToPath} from 'url';
 import pnpResolver from 'jest-pnp-resolver';
 import {
+  type ResolveResult,
   ResolverFactory,
   type NapiResolveOptions as UpstreamResolveOptions,
 } from 'unrs-resolver';
+import {getResolver, setResolver} from './fileWalkers';
 
 export interface ResolverOptions extends UpstreamResolveOptions {
   /** Directory to begin resolving from. */
@@ -19,7 +20,9 @@ export interface ResolverOptions extends UpstreamResolveOptions {
   /** List of export conditions. */
   conditions?: Array<string>;
   /** Instance of default resolver. */
-  defaultResolver: typeof defaultResolver;
+  defaultResolver: SyncResolver;
+  /** Instance of default async resolver. */
+  defaultAsyncResolver: AsyncResolver;
   /**
    * List of directory names to be looked up for modules recursively.
    *
@@ -52,7 +55,24 @@ export type AsyncResolver = (
 
 export type Resolver = SyncResolver | AsyncResolver;
 
-const defaultResolver: SyncResolver = (path, options) => {
+const handleResolveResult = (result: ResolveResult) => {
+  if (result.error) {
+    throw new Error(result.error);
+  }
+  return result.path!;
+};
+
+function baseResolver(path: string, options: ResolverOptions): string;
+function baseResolver(
+  path: string,
+  options: ResolverOptions,
+  async: true,
+): Promise<string>;
+function baseResolver(
+  path: string,
+  options: ResolverOptions,
+  async?: true,
+): string | Promise<string> {
   if (process.versions.pnp && options.allowPnp !== false) {
     return pnpResolver(path, options);
   }
@@ -75,9 +95,6 @@ const defaultResolver: SyncResolver = (path, options) => {
     /* eslint-enable prefer-const */
   } = options;
 
-  // make sure that `basedir` is an absolute path
-  basedir = resolve(basedir);
-
   modules = modules || moduleDirectory;
 
   const resolveOptions: UpstreamResolveOptions = {
@@ -88,30 +105,56 @@ const defaultResolver: SyncResolver = (path, options) => {
     ...rest,
   };
 
-  let unrsResolver = new ResolverFactory(resolveOptions);
+  let unrsResolver = getResolver();
 
-  let result = unrsResolver.sync(basedir, path);
-
-  if (!result.path && paths?.length) {
-    const modulesArr =
-      modules == null || Array.isArray(modules) ? modules : [modules];
-    if (modulesArr?.length) {
-      paths = paths.filter(p => !modulesArr.includes(p));
-    }
-    if (paths.length > 0) {
-      unrsResolver = unrsResolver.cloneWithOptions({
-        ...resolveOptions,
-        modules: paths,
-      });
-      result = unrsResolver.sync(basedir, path);
-    }
+  if (unrsResolver) {
+    unrsResolver = unrsResolver.cloneWithOptions(resolveOptions);
+  } else {
+    unrsResolver = new ResolverFactory(resolveOptions);
+    setResolver(unrsResolver);
   }
 
-  if (result.error) {
-    throw new Error(result.error);
-  }
+  const finalResolver = (
+    resolve: (
+      resolver: ResolverFactory,
+    ) => ResolveResult | Promise<ResolveResult>,
+  ) => {
+    const resolveWithPathsFallback = (result: ResolveResult) => {
+      if (!result.path && paths?.length) {
+        const modulesArr =
+          modules == null || Array.isArray(modules) ? modules : [modules];
+        if (modulesArr?.length) {
+          paths = paths.filter(p => !modulesArr.includes(p));
+        }
+        if (paths.length > 0) {
+          unrsResolver = unrsResolver!.cloneWithOptions({
+            ...resolveOptions,
+            modules: paths,
+          });
+          return resolve(unrsResolver);
+        }
+      }
+      return result;
+    };
+    const result = resolve(unrsResolver!);
+    if ('then' in result) {
+      return result.then(resolveWithPathsFallback).then(handleResolveResult);
+    }
+    return handleResolveResult(
+      resolveWithPathsFallback(result) as ResolveResult,
+    );
+  };
 
-  return result.path!;
-};
+  return finalResolver((resolver: ResolverFactory) =>
+    async ? resolver.async(basedir, path) : resolver.sync(basedir, path),
+  );
+}
+
+export const defaultResolver: SyncResolver = baseResolver;
+
+export const defaultAsyncResolver: AsyncResolver = (
+  path: string,
+  options: ResolverOptions,
+) => baseResolver(path, options, true);
 
 export default defaultResolver;

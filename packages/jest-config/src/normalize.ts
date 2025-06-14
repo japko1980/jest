@@ -8,11 +8,11 @@
 import {createHash} from 'crypto';
 import {totalmem} from 'os';
 import * as path from 'path';
-import chalk = require('chalk');
-import merge = require('deepmerge');
+import chalk from 'chalk';
+import merge from 'deepmerge';
 import {glob} from 'glob';
 import {statSync} from 'graceful-fs';
-import micromatch = require('micromatch');
+import micromatch from 'micromatch';
 import {TestPathPatterns} from '@jest/pattern';
 import type {Config} from '@jest/types';
 import {replacePathSepForRegex} from 'jest-regex-util';
@@ -936,7 +936,7 @@ export default async function normalize(
       case 'testNamePattern':
       case 'useStderr':
       case 'verbose':
-      case 'waitNextEventLoopTurnForUnhandledRejectionEvents':
+      case 'waitForUnhandledRejections':
       case 'watch':
       case 'watchAll':
       case 'watchman':

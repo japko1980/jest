@@ -96,6 +96,7 @@ const config = typescriptEslint.config(
             'babel.config.js',
             'testSetupFile.js',
             'eslint.config.mjs',
+            'yarn.config.cjs',
           ],
         },
       ],
@@ -705,7 +706,6 @@ const config = typescriptEslint.config(
       'scripts/*',
       'packages/*/__benchmarks__/test.js',
       'packages/create-jest/src/runCreate.ts',
-      'packages/jest-repl/src/cli/runtime-cli.ts',
     ],
     rules: {
       'no-console': 'off',
