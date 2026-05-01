@@ -2051,6 +2051,15 @@ export default class Runtime {
   }
 
   requireModuleOrMock<T = unknown>(from: string, moduleName: string): T {
+    if (this.isTornDown) {
+      this._logFormattedReferenceError(
+        'You are trying to `require` a file after the Jest environment has been torn down.',
+      );
+      process.exitCode = 1;
+      // @ts-expect-error: exiting early
+      return;
+    }
+
     // this module is unmockable
     if (moduleName === '@jest/globals') {
       // @ts-expect-error: we don't care that it's not assignable to T
@@ -2433,14 +2442,14 @@ export default class Runtime {
   ) {
     if (this.isTornDown) {
       this._logFormattedReferenceError(
-        'You are trying to `import` a file after the Jest environment has been torn down.',
+        'You are trying to `require` a file after the Jest environment has been torn down.',
       );
       process.exitCode = 1;
       return;
     }
     if (this.isInsideTestCode === false && !supportsDynamicImport) {
       throw new ReferenceError(
-        'You are trying to `import` a file outside of the scope of the test code.',
+        'You are trying to `require` a file outside of the scope of the test code.',
       );
     }
 
@@ -2483,7 +2492,7 @@ export default class Runtime {
 
     if (compiledFunction === null) {
       this._logFormattedReferenceError(
-        'You are trying to `import` a file after the Jest environment has been torn down.',
+        'You are trying to `require` a file after the Jest environment has been torn down.',
       );
       process.exitCode = 1;
       return;

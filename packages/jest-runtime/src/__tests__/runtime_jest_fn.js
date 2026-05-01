@@ -77,6 +77,30 @@ describe('Runtime', () => {
     });
   });
 
+  describe('require after environment torn down', () => {
+    const originalExitCode = process.exitCode;
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+      process.exitCode = originalExitCode;
+    });
+
+    it('should log error and set exit code when require is called after teardown', async () => {
+      const runtime = await createRuntime(__filename);
+      jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      runtime.teardown();
+      runtime.requireModuleOrMock(runtime.__mockRootPath, 'RegularModule');
+
+      expect(process.exitCode).toBe(1);
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'You are trying to `require` a file after the Jest environment has been torn down.',
+        ),
+      );
+    });
+  });
+
   describe('jest.isolateModules', () => {
     it('isolates the modules', async () => {
       const runtime = await createRuntime(__filename);
