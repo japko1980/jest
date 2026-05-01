@@ -5,5 +5,6 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-export {value} from './with-tla.mjs';
-export const wrapper = 'wrapper';
+export async function loadCjs() {
+  return import('./cjs-dep.cjs');
+}

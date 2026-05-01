@@ -5,12 +5,9 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-// Plain CJS without __esModule - default export should be the whole module.exports.
-'use strict';
-
 module.exports = {
-  multiply(a, b) {
-    return a * b;
-  },
-  value: 99,
+  callRequireOnEntry: key => require.cache[key].require('whatever'),
+  entry: key => require.cache[key],
+  has: key => key in require.cache,
+  keys: () => Object.keys(require.cache),
 };

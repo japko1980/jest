@@ -5,5 +5,6 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-export {value} from './with-tla.mjs';
-export const wrapper = 'wrapper';
+export const value = 'esm-export';
+export const square = n => n * n;
+export default 'default-export';

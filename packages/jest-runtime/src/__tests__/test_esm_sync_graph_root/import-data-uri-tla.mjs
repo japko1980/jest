@@ -5,5 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-export {value} from './with-tla.mjs';
-export const wrapper = 'wrapper';
+// TLA inside the data: URI body, not in this file.
+import {v} from 'data:text/javascript,export const v=await Promise.resolve(1);';
+
+export const value = v;

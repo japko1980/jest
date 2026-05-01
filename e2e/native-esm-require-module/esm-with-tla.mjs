@@ -5,5 +5,4 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-export {value} from './with-tla.mjs';
-export const wrapper = 'wrapper';
+export const value = await Promise.resolve('tla');
