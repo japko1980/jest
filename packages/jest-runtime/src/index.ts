@@ -7,7 +7,7 @@
 
 import nativeModule from 'node:module';
 import * as path from 'node:path';
-import {URL, fileURLToPath, pathToFileURL} from 'node:url';
+import {type URL, fileURLToPath, pathToFileURL} from 'node:url';
 import {
   SourceTextModule,
   SyntheticModule,
@@ -26,7 +26,7 @@ import type {
   ModuleWrapper,
 } from '@jest/environment';
 import type {LegacyFakeTimers, ModernFakeTimers} from '@jest/fake-timers';
-import type {expect, jest} from '@jest/globals';
+import type {expect} from '@jest/globals';
 import type {SourceMapRegistry} from '@jest/source-map';
 import type {TestContext, V8CoverageResult} from '@jest/test-result';
 import {
@@ -39,7 +39,7 @@ import {
 import type {Config, Global} from '@jest/types';
 import HasteMap, {type IHasteMap, type IModuleMap} from 'jest-haste-map';
 import {formatStackTrace, separateMessageFromStack} from 'jest-message-util';
-import type {MockMetadata, ModuleMocker} from 'jest-mock';
+import type {ModuleMocker} from 'jest-mock';
 import {escapePathForRegex} from 'jest-regex-util';
 import Resolver from 'jest-resolve';
 import {EXTENSION as SnapshotExtension} from 'jest-snapshot';
@@ -49,12 +49,11 @@ import {
   invariant,
   isError,
   isNonNullable,
-  protectProperties,
 } from 'jest-util';
 import {
-  createOutsideJestVmPath,
   decodePossibleOutsideJestVmPath,
   findSiblingsWithFileExtension,
+  noop,
 } from './helpers';
 import CjsExportsCache from './internals/CjsExportsCache';
 import FileCache from './internals/FileCache';
@@ -65,12 +64,28 @@ import TransformCache, {
   type TransformOptions,
 } from './internals/TransformCache';
 import V8CoverageCollector from './internals/V8CoverageCollector';
+import {generateMock} from './internals/automock';
+import {CoreModuleProvider, buildRequire} from './internals/cjsRequire';
 import type {
   ESModule,
   InitialModule,
   JestModule,
   ModuleRegistry,
 } from './internals/moduleTypes';
+import {
+  runtimeSupportsVmModules,
+  supportsNodeColonModulePrefixInRequire,
+  supportsSyncEvaluate,
+} from './internals/nodeCapabilities';
+import {
+  buildCjsAsEsmSyntheticModule,
+  buildCoreSyntheticModule,
+  buildJestGlobalsSyntheticModule,
+  buildJsonSyntheticModule,
+  buildWasmSyntheticModule,
+  evaluateSyntheticModule,
+} from './internals/syntheticBuilders';
+import type {JestGlobals, JestGlobalsWithJest} from './internals/types';
 
 const esmIsAvailable = typeof SourceTextModule === 'function';
 const supportsDynamicImport = esmIsAvailable;
@@ -85,14 +100,6 @@ const isCjsParseError = (error: unknown): error is Error =>
 
 const dataURIRegex =
   /^data:(?<mime>text\/javascript|application\/json|application\/wasm)(?:;(?<encoding>charset=utf-8|base64))?,(?<code>.*)$/;
-
-interface JestGlobals extends Global.TestFrameworkGlobals {
-  expect: typeof expect;
-}
-
-interface JestGlobalsWithJest extends JestGlobals {
-  jest: typeof jest;
-}
 
 type HasteMapOptions = {
   console?: Console;
@@ -122,12 +129,6 @@ const defaultTransformOptions: TransformOptions = {
 // Prefer listing a module here only if it is impractical to use the jest-resolve-outside-vm-option where it is required,
 // e.g. because there are many require sites spread across the dependency graph.
 const INTERNAL_MODULE_REQUIRE_OUTSIDE_OPTIMIZED_MODULES = new Set(['chalk']);
-const JEST_RESOLVE_OUTSIDE_VM_OPTION = Symbol.for(
-  'jest-resolve-outside-vm-option',
-);
-type ResolveOptions = Parameters<typeof require.resolve>[1] & {
-  [JEST_RESOLVE_OUTSIDE_VM_OPTION]?: true;
-};
 
 const testTimeoutSymbol = Symbol.for('TEST_TIMEOUT_SYMBOL');
 const retryTimesSymbol = Symbol.for('RETRY_TIMES');
@@ -149,12 +150,6 @@ const getModuleNameMapper = (config: Config.ProjectConfig) => {
   }
   return null;
 };
-
-const runtimeSupportsVmModules = typeof SyntheticModule === 'function';
-
-const supportsSyncEvaluate =
-  // @ts-expect-error - `hasAsyncGraph` is in Node v24.9+, not yet typed in @types/node@18
-  typeof SourceTextModule?.prototype.hasAsyncGraph === 'function';
 
 // `linkRequests`/`instantiate`/`hasAsyncGraph`/`hasTopLevelAwait`/
 // `moduleRequests` ship in Node v24.9 and aren't yet in `@types/node@18`.
@@ -185,10 +180,6 @@ type WorklistEntry = {
   modulePath: string;
 };
 
-function noop() {
-  // empty
-}
-
 // `SourceTextModule#hasAsyncGraph()` lets us prove a graph is sync-evaluable.
 // `SyntheticModule` does not expose it but is by definition sync (the user
 // callback is sync), so treat its absence as "not async".
@@ -209,16 +200,6 @@ function makeRequireAsyncError(
   error.code = 'ERR_REQUIRE_ASYNC_MODULE';
   return error;
 }
-
-const supportsNodeColonModulePrefixInRequire = (() => {
-  try {
-    require('node:fs');
-
-    return true;
-  } catch {
-    return false;
-  }
-})();
 
 // Decode a `data:` URI specifier into its mime type and decoded code/body.
 // `application/wasm` returns a Buffer; everything else returns a UTF-8 string.
@@ -311,7 +292,7 @@ export default class Runtime {
   private readonly _scriptTransformer: ScriptTransformer;
   private readonly transformCache: TransformCache;
   private readonly v8Coverage: V8CoverageCollector;
-  private _moduleImplementation?: typeof nativeModule.Module;
+  private readonly coreModule: CoreModuleProvider;
   private readonly jestObjectCaches: Map<string, Jest>;
   private jestGlobals?: JestGlobals;
   private testState: 'loading' | 'inTest' | 'betweenTests' | 'tornDown' =
@@ -375,6 +356,20 @@ export default class Runtime {
       (from, moduleName) => this.requireModule(from, moduleName),
       (from, moduleName) => this.requireModuleOrMock(from, moduleName),
     );
+    this.coreModule = new CoreModuleProvider({
+      buildRequireFor: filename =>
+        this._createRequireImplementation({
+          children: [],
+          exports: {},
+          filename,
+          id: filename,
+          isPreloading: false,
+          loaded: false,
+          path: path.dirname(filename),
+        }),
+      environment: this._environment,
+      resolution: this._resolution,
+    });
 
     if (config.automock) {
       for (const filePath of config.setupFiles) {
@@ -623,7 +618,7 @@ export default class Runtime {
         scratch.set(cacheKey, {
           cacheKey,
           kind: 'synthetic',
-          module: this._buildJsonSyntheticModule(
+          module: buildJsonSyntheticModule(
             this.transformCache.transform(modulePath, ESM_TRANSFORM_OPTIONS),
             modulePath,
             context,
@@ -1016,7 +1011,7 @@ export default class Runtime {
       if (resolved.enqueue) worklist.push(resolved.enqueue);
     }
 
-    const synthetic = this._buildWasmSyntheticModule(
+    const synthetic = buildWasmSyntheticModule(
       wasmModule,
       identifier,
       context,
@@ -1068,11 +1063,7 @@ export default class Runtime {
       return {
         cacheKey,
         kind: 'synthetic',
-        module: this._buildJsonSyntheticModule(
-          code as string,
-          specifier,
-          context,
-        ),
+        module: buildJsonSyntheticModule(code as string, specifier, context),
       };
     }
 
@@ -1208,7 +1199,7 @@ export default class Runtime {
       try {
         let module;
         if (modulePath.endsWith('.json')) {
-          module = this._buildJsonSyntheticModule(
+          module = buildJsonSyntheticModule(
             transformedCode,
             modulePath,
             context,
@@ -1330,11 +1321,7 @@ export default class Runtime {
           context,
         );
       } else if (mime === 'application/json') {
-        module = this._buildJsonSyntheticModule(
-          code as string,
-          specifier,
-          context,
-        );
+        module = buildJsonSyntheticModule(code as string, specifier, context);
       } else {
         module = new SourceTextModule(code as string, {
           context,
@@ -1494,50 +1481,12 @@ export default class Runtime {
     modulePath: string,
     context: VMContext,
   ): SyntheticModule {
-    const cjs = this.requireModuleOrMock(from, modulePath);
-
-    const parsedExports = this.cjsExportsCache.getExportsOf(modulePath);
-
-    // CJS modules can legally set `module.exports` to `null` or a primitive.
-    const cjsRecord =
-      typeof cjs === 'object' && cjs !== null
-        ? (cjs as Record<string, unknown>)
-        : null;
-
-    // Merge static analysis with runtime keys: cjs-module-lexer can't detect
-    // all export patterns (e.g. Object.assign-style). Since we've already
-    // required the module, Object.keys() gives the ground truth.
-    const allCandidates = new Set([
-      ...parsedExports,
-      ...(cjsRecord ? Object.keys(cjsRecord) : []),
-    ]);
-
-    const cjsExports = [...allCandidates].filter(exportName => {
-      // we don't wanna respect any exports _named_ default as a named export
-      // __esModule is a Babel/Webpack metadata flag, not a real export
-      if (exportName === 'default' || exportName === '__esModule') {
-        return false;
-      }
-      return cjsRecord
-        ? Object.hasOwnProperty.call(cjsRecord, exportName)
-        : false;
-    });
-
-    // Unwrap Babel/Webpack __esModule convention: if the CJS file signals it
-    // was originally ESM (transpiled), use cjs.default as the ESM default.
-    const defaultExport =
-      cjsRecord?.__esModule === true ? cjsRecord.default : cjs;
-
-    return new SyntheticModule(
-      [...cjsExports, 'default'],
-      function () {
-        for (const exportName of cjsExports) {
-          // @ts-expect-error: TS doesn't know what `this` is
-          this.setExport(exportName, cjs[exportName]);
-        }
-        this.setExport('default', defaultExport);
-      },
-      {context, identifier: modulePath},
+    return buildCjsAsEsmSyntheticModule(
+      from,
+      modulePath,
+      context,
+      (f, name) => this.requireModuleOrMock(f, name),
+      this.cjsExportsCache,
     );
   }
 
@@ -1635,10 +1584,10 @@ export default class Runtime {
     }
 
     if (moduleName && this._resolution.isCoreModule(moduleName)) {
-      return this._requireCoreModule(
+      return this.coreModule.require(
         moduleName,
         supportsNodeColonModulePrefixInRequire,
-      );
+      ) as T;
     }
 
     if (!modulePath) {
@@ -2035,87 +1984,9 @@ export default class Runtime {
     this.jestObjectCaches.clear();
 
     this.v8Coverage.reset();
-    this._moduleImplementation = undefined;
+    this.coreModule.reset();
 
     this.testState = 'tornDown';
-  }
-
-  private _requireResolve(
-    from: string,
-    moduleName?: string,
-    options: ResolveOptions = {},
-  ) {
-    if (moduleName == null) {
-      throw new Error(
-        'The first argument to require.resolve must be a string. Received null or undefined.',
-      );
-    }
-
-    if (path.isAbsolute(moduleName)) {
-      const module = this._resolution.resolveCjsFromDirIfExists(
-        moduleName,
-        moduleName,
-        [],
-      );
-      if (module) {
-        return module;
-      }
-    } else if (options.paths) {
-      for (const p of options.paths) {
-        const absolutePath = path.resolve(from, '..', p);
-        // required to also resolve files without leading './' directly in the path
-        const module = this._resolution.resolveCjsFromDirIfExists(
-          absolutePath,
-          moduleName,
-          [absolutePath],
-        );
-        if (module) {
-          return module;
-        }
-      }
-
-      throw new Resolver.ModuleNotFoundError(
-        `Cannot resolve module '${moduleName}' from paths ['${options.paths.join(
-          "', '",
-        )}'] from ${from}`,
-      );
-    }
-
-    try {
-      return this._resolution.resolveCjs(from, moduleName);
-    } catch (error) {
-      const module = this._resolution.getCjsMockModule(from, moduleName);
-
-      if (module) {
-        return module;
-      } else {
-        throw error;
-      }
-    }
-  }
-
-  private _requireResolvePaths(from: string, moduleName?: string) {
-    const fromDir = path.resolve(from, '..');
-    if (moduleName == null) {
-      throw new Error(
-        'The first argument to require.resolve.paths must be a string. Received null or undefined.',
-      );
-    }
-    if (moduleName.length === 0) {
-      throw new Error(
-        'The first argument to require.resolve.paths must not be the empty string.',
-      );
-    }
-
-    if (moduleName[0] === '.') {
-      return [fromDir];
-    }
-    if (this._resolution.isCoreModule(moduleName)) {
-      return null;
-    }
-    const modulePaths = this._resolution.getModulePaths(fromDir);
-    const globalPaths = this._resolution.getGlobalPaths(moduleName);
-    return [...modulePaths, ...globalPaths];
   }
 
   private _execModule(
@@ -2274,42 +2145,14 @@ export default class Runtime {
     }
   }
 
-  private _requireCoreModule(moduleName: string, supportPrefix: boolean) {
-    const moduleWithoutNodePrefix =
-      supportPrefix &&
-      this._resolution.normalizeCoreModuleSpecifier(moduleName);
-
-    if (moduleWithoutNodePrefix === 'process') {
-      return this._environment.global.process;
-    }
-
-    if (moduleWithoutNodePrefix === 'module') {
-      return this._getMockedNativeModule();
-    }
-
-    const coreModule = require(moduleName);
-    protectProperties(coreModule);
-    return coreModule;
-  }
-
   private _buildCoreSyntheticModule(
     moduleName: string,
     context: VMContext,
   ): SyntheticModule {
-    const required = this._requireCoreModule(moduleName, true);
-    const allExports = Object.entries(required);
-    const exportNames = allExports.map(([key]) => key);
-
-    return new SyntheticModule(
-      ['default', ...exportNames],
-      function () {
-        this.setExport('default', required);
-        for (const [key, value] of allExports) {
-          this.setExport(key, value);
-        }
-      },
-      // should identifier be `node://${moduleName}`?
-      {context, identifier: moduleName},
+    return buildCoreSyntheticModule(
+      moduleName,
+      context,
+      (name, supportPrefix) => this.coreModule.require(name, supportPrefix),
     );
   }
 
@@ -2347,7 +2190,7 @@ export default class Runtime {
         moduleLookup[module] = resolvedModule;
       }
     }
-    return this._buildWasmSyntheticModule(
+    return buildWasmSyntheticModule(
       wasmModule,
       identifier,
       context,
@@ -2355,135 +2198,27 @@ export default class Runtime {
     );
   }
 
-  private _getMockedNativeModule(): typeof nativeModule.Module {
-    if (this._moduleImplementation) {
-      return this._moduleImplementation;
-    }
-
-    const createRequire = (modulePath: string | URL) => {
-      const filename =
-        typeof modulePath === 'string'
-          ? modulePath.startsWith('file:///')
-            ? fileURLToPath(new URL(modulePath))
-            : modulePath
-          : fileURLToPath(modulePath);
-
-      if (!path.isAbsolute(filename)) {
-        const error: NodeJS.ErrnoException = new TypeError(
-          `The argument 'filename' must be a file URL object, file URL string, or absolute path string. Received '${filename}'`,
-        );
-        error.code = 'ERR_INVALID_ARG_TYPE';
-        throw error;
-      }
-
-      return this._createRequireImplementation({
-        children: [],
-        exports: {},
-        filename,
-        id: filename,
-        isPreloading: false,
-        loaded: false,
-        path: path.dirname(filename),
-      });
-    };
-
-    // should we implement the class ourselves?
-    class Module extends nativeModule.Module {}
-
-    for (const [key, value] of Object.entries(nativeModule.Module)) {
-      // @ts-expect-error: no index signature
-      Module[key] = value;
-    }
-
-    Module.Module = Module;
-
-    if ('createRequire' in nativeModule) {
-      Module.createRequire = createRequire;
-    }
-    if ('syncBuiltinESMExports' in nativeModule) {
-      // cast since TS seems very confused about whether it exists or not
-      (Module as any).syncBuiltinESMExports =
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
-        function syncBuiltinESMExports() {};
-    }
-
-    this._moduleImplementation = Module;
-
-    return Module;
-  }
-
-  private _generateMock<T>(from: string, moduleName: string) {
-    const modulePath =
-      this._resolution.resolveCjsStub(from, moduleName) ||
-      this._resolution.resolveCjs(from, moduleName);
-    if (!this.mockState.hasMockMetadata(modulePath)) {
-      // This allows us to handle circular dependencies while generating an
-      // automock
-      this.mockState.setMockMetadata(
-        modulePath,
-        this._moduleMocker.getMetadata({}) || {},
-      );
-
-      // In order to avoid it being possible for automocking to potentially
-      // cause side-effects within the module environment, we need to execute
-      // the module in isolation. This could cause issues if the module being
-      // mocked has calls into side-effectful APIs on another module.
-      const moduleExports = this.registries.withScratchRegistries(() =>
-        this.requireModule(from, moduleName),
-      );
-
-      const mockMetadata = this._moduleMocker.getMetadata(moduleExports);
-      if (mockMetadata == null) {
-        throw new Error(
-          `Failed to get mock metadata: ${modulePath}\n\n` +
-            'See: https://jestjs.io/docs/manual-mocks#content',
-        );
-      }
-      this.mockState.setMockMetadata(modulePath, mockMetadata);
-    }
-    const moduleMock = this._moduleMocker.generateFromMetadata<T>(
-      this.mockState.getMockMetadata(modulePath)! as MockMetadata<T>,
-    );
-    return this.mockState.notifyMockGenerated(modulePath, moduleMock);
+  private _generateMock<T>(from: string, moduleName: string): T {
+    return generateMock<T>(from, moduleName, {
+      mockState: this.mockState,
+      moduleMocker: this._moduleMocker,
+      registries: this.registries,
+      requireModule: (f, name) => this.requireModule(f, name),
+      resolution: this._resolution,
+    });
   }
 
   private _createRequireImplementation(
     from: InitialModule,
     options?: TransformOptions,
   ): NodeJS.Require {
-    const resolve = (moduleName: string, resolveOptions?: ResolveOptions) => {
-      const resolved = this._requireResolve(
-        from.filename,
-        moduleName,
-        resolveOptions,
-      );
-      if (
-        resolveOptions?.[JEST_RESOLVE_OUTSIDE_VM_OPTION] &&
-        options?.isInternalModule
-      ) {
-        return createOutsideJestVmPath(resolved);
-      }
-      return resolved;
-    };
-    resolve.paths = (moduleName: string) =>
-      this._requireResolvePaths(from.filename, moduleName);
-
-    const moduleRequire = (
-      options?.isInternalModule
-        ? (moduleName: string) =>
-            this.requireInternalModule(from.filename, moduleName)
-        : this.requireModuleOrMock.bind(this, from.filename)
-    ) as NodeJS.Require;
-    moduleRequire.extensions = Object.create(null);
-    moduleRequire.resolve = resolve;
-    moduleRequire.cache = this.registries.createRequireCacheProxy();
-
-    Object.defineProperty(moduleRequire, 'main', {
-      enumerable: true,
-      value: this._mainModule,
+    return buildRequire(from, options, {
+      mainModule: () => this._mainModule,
+      registries: this.registries,
+      requireDispatch: (f, name) => this.requireModuleOrMock(f, name),
+      requireInternal: (f, name) => this.requireInternalModule(f, name),
+      resolution: this._resolution,
     });
-
-    return moduleRequire;
   }
 
   private _createJestObjectFor(from: string): Jest {
@@ -2834,60 +2569,6 @@ export default class Runtime {
     return {...this.getGlobalsFromEnvironment(), jest};
   }
 
-  // Build a JSON SyntheticModule exposing the parsed value as the `default`
-  // export. Returns it unevaluated; callers either evaluate it themselves
-  // (legacy async path) or plug it into a parent's `linkRequests` and let the
-  // root's evaluate cascade trigger it (sync path).
-  private _buildJsonSyntheticModule(
-    jsonText: string,
-    identifier: string,
-    context: VMContext,
-  ): SyntheticModule {
-    return new SyntheticModule(
-      ['default'],
-      function () {
-        const obj = JSON.parse(jsonText);
-        this.setExport('default', obj);
-      },
-      {context, identifier},
-    );
-  }
-
-  // Build the wasm SyntheticModule. The body reads each import's namespace
-  // via `getDepNamespace`, which both the sync graph (closure over `scratch`)
-  // and the legacy path (closure over a pre-built `moduleLookup`) supply.
-  private _buildWasmSyntheticModule(
-    wasmModule: WebAssembly.Module,
-    identifier: string,
-    context: VMContext,
-    getDepNamespace: (importModule: string) => Record<string, unknown>,
-  ): SyntheticModule {
-    const exports = WebAssembly.Module.exports(wasmModule);
-    const imports = WebAssembly.Module.imports(wasmModule);
-
-    return new SyntheticModule(
-      exports.map(({name}) => name),
-      function () {
-        const importsObject: WebAssembly.Imports = {};
-        for (const {module: depSpec, name} of imports) {
-          if (!importsObject[depSpec]) {
-            importsObject[depSpec] = {};
-          }
-          const namespace = getDepNamespace(depSpec);
-          importsObject[depSpec][name] = namespace[name] as never;
-        }
-        const wasmInstance = new WebAssembly.Instance(
-          wasmModule,
-          importsObject,
-        );
-        for (const {name} of exports) {
-          this.setExport(name, wasmInstance.exports[name]);
-        }
-      },
-      {context, identifier},
-    );
-  }
-
   // Shared async dynamic-import callback: installed on every SourceTextModule
   // we construct (file, data: URI). Calls into resolveModule + linkAndEvaluate
   // - the dynamic import is async by language regardless of Node version.
@@ -2925,6 +2606,15 @@ export default class Runtime {
     from: string,
     context: VMContext,
   ): SyntheticModule {
+    return buildJestGlobalsSyntheticModule(
+      from,
+      context,
+      jestFor => this._getOrCreateJest(jestFor),
+      () => this.getGlobalsFromEnvironment(),
+    );
+  }
+
+  private _getOrCreateJest(from: string): Jest {
     let jest = this.jestObjectCaches.get(from);
 
     if (!jest) {
@@ -2932,21 +2622,7 @@ export default class Runtime {
 
       this.jestObjectCaches.set(from, jest);
     }
-
-    const globals: JestGlobalsWithJest = {
-      ...this.getGlobalsFromEnvironment(),
-      jest,
-    };
-
-    return new SyntheticModule(
-      Object.keys(globals),
-      function () {
-        for (const [key, value] of Object.entries(globals)) {
-          this.setExport(key, value);
-        }
-      },
-      {context, identifier: '@jest/globals'},
-    );
+    return jest;
   }
 
   private getGlobalsForEsm(
@@ -2983,41 +2659,4 @@ export default class Runtime {
   setGlobalsForRuntime(globals: JestGlobals): void {
     this.jestGlobals = globals;
   }
-}
-
-// On Node v22.21+ / v24.8+ a SyntheticModule starts in `'linked'` and the
-// body runs synchronously even though `evaluate()` returns a Promise -
-// return it sync so callers can store the actual module rather than a
-// Promise that can poison the registry if microtask draining stalls. On
-// older Node it starts `'unlinked'` and link/evaluate are genuinely async;
-// fall back to the async path there (the async-only legacy ESM code paths
-// handle the Promise return fine, and sync `require(esm)` doesn't exist on
-// those versions anyway).
-function evaluateSyntheticModule(
-  module: SyntheticModule,
-): SyntheticModule | Promise<SyntheticModule> {
-  if (module.status === 'unlinked') {
-    return evaluateSyntheticModuleAsync(module);
-  }
-  module.evaluate().catch(noop);
-  if (module.status === 'errored') {
-    throw module.error;
-  }
-  invariant(
-    module.status === 'evaluated',
-    `Synthetic module ${module.identifier} did not evaluate synchronously (status="${module.status}"). This is a bug in Jest, please report it!`,
-  );
-  return module;
-}
-
-async function evaluateSyntheticModuleAsync(
-  module: SyntheticModule,
-): Promise<SyntheticModule> {
-  await module.link(() => {
-    throw new Error('This should never happen');
-  });
-
-  await module.evaluate();
-
-  return module;
 }
