@@ -25,19 +25,19 @@ import type {ResolverConfig} from './types';
 
 export type FindNodeModuleConfig = {
   basedir: string;
-  conditions?: Array<string>;
-  extensions?: Array<string>;
-  moduleDirectory?: Array<string>;
-  paths?: Array<string>;
+  conditions?: ReadonlyArray<string>;
+  extensions?: ReadonlyArray<string>;
+  moduleDirectory?: ReadonlyArray<string>;
+  paths?: ReadonlyArray<string>;
   resolver?: string | null;
   rootDir?: string;
   throwIfNotFound?: boolean;
 };
 
 export type ResolveModuleConfig = {
-  conditions?: Array<string>;
+  conditions?: ReadonlyArray<string>;
   skipNodeResolution?: boolean;
-  paths?: Array<string>;
+  paths?: ReadonlyArray<string>;
 };
 
 const NATIVE_PLATFORM = 'native';
