@@ -16,8 +16,10 @@ import {
 
 skipSuiteOnJasmine();
 
-test('prints useful error for requires after test is done w/o `waitForUnhandledRejections`', () => {
-  const {exitCode, stderr} = runJest('require-after-teardown');
+test('prints useful error for imports after test is done w/o `waitForUnhandledRejections`', () => {
+  const {exitCode, stderr} = runJest('import-after-teardown', [], {
+    nodeOptions: '--experimental-vm-modules --no-warnings',
+  });
 
   const {rest} = extractSummary(stderr);
   const normalized = replaceRepoRoot(
@@ -25,13 +27,15 @@ test('prints useful error for requires after test is done w/o `waitForUnhandledR
   );
   expect(exitCode).toBe(1);
   expect(normalized).toMatchSnapshot();
-  expect(stderr).toContain('(__tests__/lateRequire.test.js:11:20)');
+  expect(stderr).toContain('(__tests__/lateImport.test.mjs:10:');
 });
 
-test('prints useful error for requires after test is done w/ `waitForUnhandledRejections`', () => {
-  const {exitCode, stderr} = runJest('require-after-teardown', [
-    '--waitForUnhandledRejections',
-  ]);
+test('prints useful error for imports after test is done w/ `waitForUnhandledRejections`', () => {
+  const {exitCode, stderr} = runJest(
+    'import-after-teardown',
+    ['--waitForUnhandledRejections'],
+    {nodeOptions: '--experimental-vm-modules --no-warnings'},
+  );
 
   const {rest} = extractSummary(stderr);
   const normalized = replaceRepoRoot(
@@ -39,5 +43,5 @@ test('prints useful error for requires after test is done w/ `waitForUnhandledRe
   );
   expect(exitCode).toBe(1);
   expect(normalized).toMatchSnapshot();
-  expect(stderr).toContain('(__tests__/lateRequire.test.js:11:20)');
+  expect(stderr).toContain('(__tests__/lateImport.test.mjs:10:');
 });

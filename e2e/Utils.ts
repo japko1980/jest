@@ -15,6 +15,7 @@ import {
   sync as spawnSync,
 } from 'execa';
 import * as fs from 'graceful-fs';
+import slash from 'slash';
 import which from 'which';
 import type {Config} from '@jest/types';
 
@@ -195,13 +196,28 @@ export const copyDir = (src: string, dest: string) => {
 export const replaceSeed = (str: string) =>
   str.replaceAll(/Seed: {8}(-?\d+)/g, 'Seed:       <<REPLACED>>');
 
-export const replaceTime = (str: string) =>
+const replaceTime = (str: string) =>
   str
     .replaceAll(/\d*\.?\d+ m?s\b/g, '<<REPLACED>>')
     .replaceAll(', estimated <<REPLACED>>', '');
 
+export const replaceNodeInfo = (str: string) =>
+  str
+    .replaceAll(/[^\n]*node:internal\/[^\n]*\n?/g, '')
+    .replaceAll(/Node\.js v\d+\.\d+\.\d+/g, 'Node.js <<REPLACED>>');
+
 export const replaceJestBuildLineNumbers = (str: string) =>
-  str.replaceAll(/([\w-]+\/build\/[^:\s]+:)\d+:\d+/g, '$1<<REPLACED>>');
+  str.replaceAll(
+    /([^:\s]*[\w-]+[/\\]build[/\\][^:\s]+:)\d+(?::\d+)?/g,
+    '$1<<REPLACED>>',
+  );
+
+const repoRoot = path.resolve(__dirname, '..');
+
+export const replaceRepoRoot = (str: string) =>
+  str
+    .replaceAll(repoRoot, '<<REPO_ROOT>>')
+    .replaceAll(/<<REPO_ROOT>>[^\s()"']+/g, p => slash(p));
 
 // Since Jest does not guarantee the order of tests we'll sort the output.
 export const sortLines = (output: string) =>

@@ -21,6 +21,7 @@
 - `[jest-runtime]` Extend the `.js`-with-ESM-syntax fallback to `require()` on Node v24.9+ - falls back to `require(esm)` when the CJS parser rejects ESM syntax ([#16078](https://github.com/jestjs/jest/pull/16078))
 - `[jest-runtime]` Fix deadlocks and double-evaluation in concurrent ESM and wasm imports ([#16050](https://github.com/jestjs/jest/pull/16050))
 - `[jest-runtime]` Fix error when `require()` is called after the Jest environment has been torn down ([#15951](https://github.com/jestjs/jest/pull/15951))
+- `[jest-runtime]` Fix missing error when `import()` is called after the Jest environment has been torn down ([#16080](https://github.com/jestjs/jest/pull/16080))
 
 ### Chore & Maintenance
 
